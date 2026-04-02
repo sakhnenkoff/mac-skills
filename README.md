@@ -7,6 +7,7 @@ Reusable [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skills fo
 | Skill | What it does |
 |-------|-------------|
 | [github-setup](.claude/skills/github-setup/SKILL.md) | Full GitHub setup from zero: Homebrew, SSH keys (single or multi-account), `~/.ssh/config`, GitHub CLI install + auth, per-directory git identity |
+| [github-email-filters](.claude/skills/github-email-filters/SKILL.md) | Gmail filters to silence noisy GitHub emails (comment threads, repo watching) while keeping review requests, author replies, and @mentions |
 
 ## Usage
 
