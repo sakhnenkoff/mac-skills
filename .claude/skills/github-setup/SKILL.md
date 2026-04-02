@@ -1,6 +1,6 @@
 ---
 name: github-setup
-description: Complete GitHub setup on a new Mac — SSH key generation, multi-account SSH config, GitHub CLI installation and authentication.
+description: Use when setting up GitHub on a new Mac, adding another GitHub account (personal, work, enterprise), configuring multi-account SSH, or fixing HTTPS auth failures for gh CLI tools
 ---
 
 # GitHub Setup
@@ -10,7 +10,19 @@ description: Complete GitHub setup on a new Mac — SSH key generation, multi-ac
 - Setting up GitHub on a new Mac from scratch
 - Adding another GitHub account (personal, work, enterprise)
 - Installing and authenticating the GitHub CLI (`gh`)
+- Fixing HTTPS authentication failures (e.g., plugin installs, `gh` commands)
 - Configuring per-directory git identity for multi-account workflows
+
+## Key concept: SSH vs `gh` CLI
+
+SSH and `gh` CLI handle multiple accounts differently. Explain this to the user when setting up 2+ accounts on the same hostname.
+
+| Layer | Multiple accounts on same host? | How it works |
+|-------|--------------------------------|--------------|
+| **SSH** (git clone/push/pull) | Simultaneous — no switching | Host aliases in `~/.ssh/config` route to correct key |
+| **`gh` CLI** (PRs, issues, API, HTTPS) | One active at a time — requires `gh auth switch` | Only the active account is used for `gh` commands and HTTPS |
+
+Different hostnames (e.g., `github.com` + `github.enterprise.com`) are always independent for both SSH and `gh`.
 
 ## Procedure
 
@@ -43,11 +55,10 @@ brew install gh
 Generate one ed25519 key per GitHub account. Use the account email as the comment.
 
 ```bash
-# For each account:
 ssh-keygen -t ed25519 -C "your-email@example.com" -f ~/.ssh/id_ed25519_<label>
 ```
 
-Example labels: `personal`, `work`, `company-name`.
+Example labels: `personal`, `work`, `sch`, `company-name`.
 
 If you only have one GitHub account, a single key with the default path is fine:
 
@@ -62,9 +73,6 @@ ssh-keygen -t ed25519 -C "your-email@example.com"
 - If some keys are missing: add only the missing ones.
 
 ```bash
-# Start the agent (usually already running on macOS)
-eval "$(ssh-agent -s)"
-
 # Add each key, storing the passphrase in macOS Keychain
 ssh-add --apple-use-keychain ~/.ssh/id_ed25519_<label>
 ```
@@ -75,70 +83,114 @@ ssh-add --apple-use-keychain ~/.ssh/id_ed25519_<label>
 - If all needed hosts are configured: skip this step.
 - If config exists but a new host is needed: append only the new entry.
 
+**Always include `IdentitiesOnly yes`** to prevent SSH from trying wrong keys.
+
 **Single account (simple):**
 
 ```
 Host github.com
-  AddKeysToAgent yes
-  UseKeychain yes
-  IdentityFile ~/.ssh/id_ed25519
-```
-
-**Multiple accounts on github.com (alias-based):**
-
-When two or more accounts use the same `github.com`, create host aliases:
-
-```
-# Personal account
-Host github.com-personal
   HostName github.com
   User git
+  IdentityFile ~/.ssh/id_ed25519
   AddKeysToAgent yes
   UseKeychain yes
-  IdentityFile ~/.ssh/id_ed25519_personal
+  IdentitiesOnly yes
+```
 
-# Work account
+**Multiple accounts on the same hostname (alias-based):**
+
+When two or more accounts use the same hostname, keep the first account on the bare host and create aliases for additional accounts:
+
+```
+# Primary account (personal)
+Host github.com
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/id_ed25519_personal
+  AddKeysToAgent yes
+  UseKeychain yes
+  IdentitiesOnly yes
+
+# Second account on same host (enterprise)
 Host github.com-work
   HostName github.com
   User git
+  IdentityFile ~/.ssh/id_ed25519_work
   AddKeysToAgent yes
   UseKeychain yes
-  IdentityFile ~/.ssh/id_ed25519_work
+  IdentitiesOnly yes
 ```
 
-Then clone using the alias as the host:
-
-```bash
-git clone git@github.com-work:org/repo.git
-```
+Clone using the alias: `git clone git@github.com-work:org/repo.git`
 
 **Multiple accounts on different hostnames (e.g., github.com + GitHub Enterprise):**
 
+No aliases needed — SSH matches by hostname automatically:
+
 ```
 Host github.com
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/id_ed25519_personal
   AddKeysToAgent yes
   UseKeychain yes
-  IdentityFile ~/.ssh/id_ed25519_personal
+  IdentitiesOnly yes
 
 Host github.example.com
+  HostName github.example.com
+  User git
+  IdentityFile ~/.ssh/id_ed25519_work
   AddKeysToAgent yes
   UseKeychain yes
-  IdentityFile ~/.ssh/id_ed25519_work
+  IdentitiesOnly yes
 ```
 
-No aliases needed — SSH matches by hostname automatically.
+**Mixed scenario (both same and different hostnames):**
+
+This is the most common real-world setup. Combine the patterns:
+
+```
+# Account 1: github.com (personal)
+Host github.com
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/id_ed25519_personal
+  AddKeysToAgent yes
+  UseKeychain yes
+  IdentitiesOnly yes
+
+# Account 2: GitHub Enterprise (different hostname — no alias needed)
+Host github.enterprise.com
+  HostName github.enterprise.com
+  User git
+  IdentityFile ~/.ssh/id_ed25519_corp
+  AddKeysToAgent yes
+  UseKeychain yes
+  IdentitiesOnly yes
+
+# Account 3: github.com (enterprise — alias needed, shares hostname with Account 1)
+Host github.com-ent
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/id_ed25519_ent
+  AddKeysToAgent yes
+  UseKeychain yes
+  IdentitiesOnly yes
+```
 
 ### Step 6: Add public keys to GitHub
 
-**Check:** `ssh -T git@<host> 2>&1` for each host/alias.
+**Check:** `ssh -T git@<host-or-alias> 2>&1` for each host/alias.
 - If `Hi <username>!` is returned: the key is already added, skip for that host.
 - If `Permission denied`: the public key still needs to be added to GitHub.
 
-Copy each public key and add it in GitHub UI under **Settings > SSH and GPG keys > New SSH key**.
+Copy each public key to clipboard and instruct the user to add it in GitHub UI under **Settings > SSH and GPG keys > New SSH key**.
 
 ```bash
 pbcopy < ~/.ssh/id_ed25519_<label>.pub
 ```
+
+**This step requires user action.** Tell them the key is on their clipboard, where to paste it, and **wait for confirmation before proceeding** to Step 7.
 
 ### Step 7: Verify SSH connections
 
@@ -146,12 +198,13 @@ Run `ssh -T` for every configured host/alias. This step is never skipped — it 
 
 ```bash
 ssh -T git@github.com
-# or for aliases:
-ssh -T git@github.com-personal
-ssh -T git@github.com-work
+ssh -T git@github.enterprise.com
+ssh -T git@github.com-work  # alias
 ```
 
 Expected: `Hi <username>! You've successfully authenticated...`
+
+(Exit code 1 is expected — GitHub doesn't provide shell access.)
 
 ### Step 8: Authenticate GitHub CLI
 
@@ -160,26 +213,34 @@ Expected: `Hi <username>! You've successfully authenticated...`
 - If authenticated but using HTTPS protocol: re-authenticate with `--git-protocol ssh`.
 - If not authenticated: proceed.
 
-For a single account:
+**This step is interactive.** Tell the user to run:
 
-```bash
-gh auth login
+```
+! gh auth login --hostname github.com
 ```
 
 Select **SSH** as the preferred protocol when prompted.
 
-For multiple accounts:
+For multiple accounts on the same hostname, repeat `gh auth login` for each account. Use `gh auth switch` to change the active account:
 
 ```bash
-# Log in to each account
-gh auth login --hostname github.com
-gh auth login --hostname github.example.com
-
-# Switch between accounts on the same host
-gh auth switch
+gh auth switch --hostname github.com --user <username>
 ```
 
-### Step 9: Set per-directory git identity
+### Step 9: Set up HTTPS credential helper
+
+**Check:** `git config --global credential.helper`
+- If `gh auth setup-git` output or `/usr/local/bin/gh auth git-credential` is configured: skip.
+
+Many tools (Claude Code plugins, `npm`, package managers) clone via HTTPS, not SSH. Register `gh` as the HTTPS credential helper so these work:
+
+```bash
+gh auth setup-git
+```
+
+This uses whichever `gh` account is currently active on each hostname.
+
+### Step 10: Set per-directory git identity
 
 **Check:** `git config --global --get-regexp includeIf` and check for existing `[user]` in `~/.gitconfig`.
 - If `includeIf` rules already cover the needed directories: skip this step.
@@ -219,7 +280,15 @@ After running through all steps, print a summary table:
 | SSH config | Configured / Updated / Created |
 | GitHub SSH | Verified / Needs manual key upload |
 | gh auth | Authenticated / Needs login |
+| HTTPS credential helper | Configured / Skipped |
 | Git identity | Configured / Skipped (single account) |
+
+For multi-account setups, also print which account is active per hostname:
+
+| Host | Active `gh` account | SSH key |
+|------|---------------------|---------|
+| github.com | username (via `gh auth status`) | key file |
+| github.enterprise.com | username | key file |
 
 ## Checklist
 
@@ -227,8 +296,9 @@ After running through all steps, print a summary table:
 - [ ] `gh` CLI installed (`gh --version`)
 - [ ] SSH key(s) generated
 - [ ] Keys added to SSH agent with Keychain integration
-- [ ] `~/.ssh/config` configured
+- [ ] `~/.ssh/config` configured (with `IdentitiesOnly yes`)
 - [ ] Public key(s) added to GitHub
 - [ ] `ssh -T` succeeds for each host/alias
 - [ ] `gh auth status` shows authenticated
+- [ ] HTTPS credential helper configured (`gh auth setup-git`)
 - [ ] Per-directory git identity configured (if multi-account)
